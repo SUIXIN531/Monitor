@@ -72,8 +72,26 @@ export const analyzeArbitrage = async (data: CoinData, lang: 'en' | 'zh' = 'en')
     });
 
     return JSON.parse(response.text || "{}");
-  } catch (error) {
+  } catch (error: any) {
     console.error("Error analyzing arbitrage:", error);
+
+    // Improved error handling for location/region issues (Error 412)
+    const errorMessage = error?.message || JSON.stringify(error);
+    const isLocationError = errorMessage.includes("User location is not supported") || 
+                            errorMessage.includes("412") || 
+                            errorMessage.includes("FAILED_PRECONDITION");
+
+    if (isLocationError) {
+      return {
+        recommendation: lang === 'zh' 
+          ? "当前 IP 地区不支持 Gemini API，请开启 VPN (如美国节点) 后重试。" 
+          : "Gemini API is not available in your region. Please use a VPN (e.g., US) and try again.",
+        strategy: "Region restricted.",
+        riskLevel: "High", // Displays as red/alert
+        estimatedYield: "Error"
+      };
+    }
+
     return {
       recommendation: lang === 'zh' ? "分析失败" : "Analysis failed",
       strategy: lang === 'zh' ? "无法连接到 AI 服务。" : "Could not generate strategy due to API error.",

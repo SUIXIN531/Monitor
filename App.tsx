@@ -1,9 +1,12 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import ArbitrageScanner from './components/ArbitrageScanner';
 import MarketList from './components/MarketList';
 import { LanguageIcon, HomeIcon, ChartBarIcon, Cog6ToothIcon, XMarkIcon, BellAlertIcon, BellSlashIcon } from '@heroicons/react/24/solid';
 import { LanguageProvider, useLanguage } from './contexts/LanguageContext';
 import { SettingsProvider, useSettings } from './contexts/SettingsContext';
+import { Capacitor } from '@capacitor/core';
+import { StatusBar, Style } from '@capacitor/status-bar';
+import { App as CapApp } from '@capacitor/app';
 
 const SettingsModal: React.FC<{ isOpen: boolean; onClose: () => void }> = ({ isOpen, onClose }) => {
   const { t } = useLanguage();
@@ -149,6 +152,27 @@ const AppContent: React.FC = () => {
   const { t, toggleLanguage } = useLanguage();
   const [activeTab, setActiveTab] = useState<'scanner' | 'market'>('scanner');
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+
+  useEffect(() => {
+    // Native Android Setup
+    if (Capacitor.isNativePlatform()) {
+      // 1. Set Status Bar Color to match theme
+      StatusBar.setStyle({ style: Style.Dark });
+      StatusBar.setBackgroundColor({ color: '#0f172a' });
+
+      // 2. Handle Hardware Back Button
+      CapApp.addListener('backButton', ({ canGoBack }) => {
+        if (!canGoBack) {
+          CapApp.exitApp();
+        } else {
+          // If we had routing, we'd go back here. 
+          // Since it's a tab app, we can just exit or ignore.
+          // For now, exit app if on root.
+          CapApp.exitApp();
+        }
+      });
+    }
+  }, []);
 
   return (
     <div className="min-h-screen bg-[#0f172a] text-slate-200">

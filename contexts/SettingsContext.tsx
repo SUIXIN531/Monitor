@@ -1,4 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
+import { Capacitor } from '@capacitor/core';
+import { LocalNotifications } from '@capacitor/local-notifications';
 
 interface SettingsContextType {
   alertThreshold: number; // Arbitrage spread threshold
@@ -38,10 +40,19 @@ export const SettingsProvider: React.FC<{ children: ReactNode }> = ({ children }
     if (savedVolWindow) setVolatilityWindowState(parseInt(savedVolWindow, 10));
 
     // Check permission status
-    if ('Notification' in window && Notification.permission === 'granted') {
+    checkPermission();
+  }, []);
+
+  const checkPermission = async () => {
+    if (Capacitor.isNativePlatform()) {
+      const result = await LocalNotifications.checkPermissions();
+      if (result.display === 'granted') {
+        setNotificationsEnabled(true);
+      }
+    } else if ('Notification' in window && Notification.permission === 'granted') {
       setNotificationsEnabled(true);
     }
-  }, []);
+  };
 
   const setAlertThreshold = (val: number) => {
     setAlertThresholdState(val);
@@ -59,6 +70,19 @@ export const SettingsProvider: React.FC<{ children: ReactNode }> = ({ children }
   };
 
   const requestNotificationPermission = async () => {
+    if (Capacitor.isNativePlatform()) {
+       try {
+         const result = await LocalNotifications.requestPermissions();
+         if (result.display === 'granted') {
+            setNotificationsEnabled(true);
+            return true;
+         }
+       } catch (e) {
+         console.error("Native permission error", e);
+       }
+       return false;
+    }
+
     if (!('Notification' in window)) {
       alert("This browser does not support desktop notification");
       return false;

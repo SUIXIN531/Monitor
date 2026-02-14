@@ -1,5 +1,5 @@
 {
-  "name": "Copy of 监控器",
+  "name": "监控器",
   "description": "Real-time arbitrage monitor for Binance Spot vs. Perpetual Futures (U-Margined & Coin-Margined) with AI-powered market analysis.",
   "requestFramePermissions": []
 }

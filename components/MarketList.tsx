@@ -1,7 +1,20 @@
 import React, { useEffect, useState, useMemo, useRef } from 'react';
 import { useLanguage } from '../contexts/LanguageContext';
 import { useSettings } from '../contexts/SettingsContext';
-import { MagnifyingGlassIcon, ArrowTrendingUpIcon, ArrowTrendingDownIcon, BellAlertIcon } from '@heroicons/react/24/solid';
+import { 
+  MagnifyingGlassIcon, 
+  ArrowTrendingUpIcon, 
+  ArrowTrendingDownIcon, 
+  BellAlertIcon,
+  PencilSquareIcon,
+  CheckIcon,
+  TrashIcon,
+  ChevronUpIcon,
+  ChevronDownIcon,
+  PlusIcon
+} from '@heroicons/react/24/solid';
+import { Capacitor } from '@capacitor/core';
+import { LocalNotifications } from '@capacitor/local-notifications';
 
 interface TickerData {
   s: string; // symbol
@@ -14,18 +27,39 @@ interface PricePoint {
   time: number;
 }
 
-const STABLE_COINS = ['USDC', 'FDUSD', 'DAI', 'USDe', 'TUSD', 'EUR'];
-const CRYPTO_LIST = [
-  'BTC', 'ETH', 'BNB', 'SOL', 'XRP', 'DOGE', 'ADA', 'AVAX', 'SHIB', 'DOT', 
-  'TRX', 'LINK', 'MATIC', 'LTC', 'BCH', 'UNI', 'NEAR', 'APT', 'FIL', 'ATOM',
-  'SUI', 'PEPE', 'WLD', 'ORDI'
+// Updated Default Coins list to include requested stablecoins at the top
+const DEFAULT_COINS = [
+  'USD1', 'U', 'USDC', 'FDUSD', 'XUSD', 'USDe', 'TUSD', 'RLUSD', 'PYUSD', 'DAI', 'BUSD',
+  'BTC', 'ETH', 'BNB', 'SOL', 'XRP', 'DOGE', 'ADA', 'AVAX', 
+  'SHIB', 'DOT', 'TRX', 'LINK', 'MATIC', 'LTC', 'BCH', 'UNI', 'NEAR', 'APT', 
+  'FIL', 'ATOM', 'SUI', 'PEPE', 'WLD', 'ORDI'
 ];
 
-const ALL_COINS = [...STABLE_COINS, ...CRYPTO_LIST];
+// Define which coins are stablecoins for formatting (4 decimal places)
+const STABLE_COINS = [
+  'USD1', 'U', 'USDC', 'FDUSD', 'XUSD', 'USDe', 'TUSD', 'RLUSD', 'PYUSD', 'DAI', 'BUSD', 'EUR'
+];
 
 const MarketList: React.FC = () => {
   const { t } = useLanguage();
   const { volatilityThreshold, volatilityWindow, notificationsEnabled } = useSettings();
+  
+  // State for user-managed coin list
+  const [coins, setCoins] = useState<string[]>(() => {
+    const saved = localStorage.getItem('market_coins');
+    // If saved exists, use it. If the default list has grown significantly (e.g. new update), 
+    // you might want to merge, but for now we prioritize user customization if it exists.
+    // However, since we just added critical coins, if the user hasn't customized much, 
+    // they might miss them. For this specific update request, we will rely on defaults 
+    // if the saved list doesn't include the new priority coins? 
+    // No, standard behavior is to respect local storage. 
+    // Users can add them manually or clear cache to see new defaults.
+    return saved ? JSON.parse(saved) : DEFAULT_COINS;
+  });
+
+  const [isEditing, setIsEditing] = useState(false);
+  const [newCoinInput, setNewCoinInput] = useState('');
+  
   const [tickers, setTickers] = useState<Record<string, TickerData>>({});
   const [searchTerm, setSearchTerm] = useState('');
   const [status, setStatus] = useState<'connecting' | 'connected' | 'error'>('connecting');
@@ -35,15 +69,13 @@ const MarketList: React.FC = () => {
   const priceHistoryRef = useRef<Record<string, PricePoint[]>>({});
   const lastAlertTimeRef = useRef<Record<string, number>>({});
   
-  // Refs for settings to allow access inside WebSocket callback without reconnecting
   const settingsRef = useRef({
     volatilityThreshold,
     volatilityWindow,
     notificationsEnabled,
-    t // Include translation function if needed, though usually stable
+    t
   });
 
-  // Sync refs with state/props
   useEffect(() => {
     settingsRef.current = {
         volatilityThreshold,
@@ -53,9 +85,21 @@ const MarketList: React.FC = () => {
     };
   }, [volatilityThreshold, volatilityWindow, notificationsEnabled, t]);
 
+  // Persist coins to local storage whenever they change
   useEffect(() => {
+    localStorage.setItem('market_coins', JSON.stringify(coins));
+  }, [coins]);
+
+  // Memoize the sorted list of coins for WS dependency to avoid reconnecting on reorder
+  const wsCoinsString = useMemo(() => {
+    return [...coins].sort().join(',');
+  }, [coins]);
+
+  useEffect(() => {
+    if (coins.length === 0) return;
+
     // Construct stream names for miniTicker
-    const streams = ALL_COINS.map(coin => `${coin.toLowerCase()}usdt@miniTicker`).join('/');
+    const streams = coins.map(coin => `${coin.toLowerCase()}usdt@miniTicker`).join('/');
     const wsUrl = `wss://stream.binance.com:9443/stream?streams=${streams}`;
     
     let ws: WebSocket | null = null;
@@ -72,7 +116,6 @@ const MarketList: React.FC = () => {
       ws.onmessage = (event) => {
         try {
           const message = JSON.parse(event.data);
-          // message format: { stream: 'btcusdt@miniTicker', data: { ...tickerData } }
           if (message.data) {
             const data = message.data;
             const symbol = data.s;
@@ -84,37 +127,26 @@ const MarketList: React.FC = () => {
               [symbol]: data
             }));
 
-            // Access latest settings from ref
             const { volatilityThreshold, volatilityWindow, notificationsEnabled, t } = settingsRef.current;
 
-            // Volatility Logic
             if (notificationsEnabled && !isNaN(currentPrice)) {
-                // Initialize array if needed
                 if (!priceHistoryRef.current[symbol]) {
                     priceHistoryRef.current[symbol] = [];
                 }
 
                 const history = priceHistoryRef.current[symbol];
-                
-                // Add current price
                 history.push({ price: currentPrice, time: now });
 
-                // Prune old history (keep data for window + 1 minute buffer)
                 const windowMs = volatilityWindow * 60 * 1000;
                 const cutoff = now - windowMs - 60000; 
                 
-                // Simple performance optimization: only shift if first element is too old
                 if (history[0] && history[0].time < cutoff) {
-                     // Keep array clean
                      while(history.length > 0 && history[0].time < cutoff) {
                          history.shift();
                      }
                 }
 
-                // Check for volatility trigger
-                // Find the price point closest to (now - windowMs)
                 const targetTime = now - windowMs;
-                // Since array is sorted by time, we can just find the first element >= targetTime
                 const comparePoint = history.find(p => p.time >= targetTime);
 
                 if (comparePoint) {
@@ -122,18 +154,25 @@ const MarketList: React.FC = () => {
                     
                     if (priceChange >= volatilityThreshold) {
                         const lastAlert = lastAlertTimeRef.current[symbol] || 0;
-                        // Rate limit: Don't alert again for this symbol within the window period
                         if (now - lastAlert > windowMs) {
                             lastAlertTimeRef.current[symbol] = now;
                             
-                            // Trigger Alert
                             const rawSymbol = symbol.replace('USDT', '');
                             const msg = t.volAlertBody
                                 .replace('{symbol}', rawSymbol)
                                 .replace('{percent}', priceChange.toFixed(2))
                                 .replace('{minutes}', volatilityWindow.toString());
 
-                            if (document.visibilityState === 'hidden' || true) {
+                            if (Capacitor.isNativePlatform()) {
+                                LocalNotifications.schedule({
+                                    notifications: [{
+                                        title: `${t.appTitle}: ${rawSymbol} Volatility!`,
+                                        body: msg,
+                                        id: Math.floor(Math.random() * 1000000),
+                                        schedule: { at: new Date(Date.now() + 100) }
+                                    }]
+                                }).catch(err => console.error("Notif error", err));
+                            } else if (document.visibilityState === 'hidden' || true) {
                                 new Notification(`${t.appTitle}: ${rawSymbol} Volatility!`, {
                                     body: msg,
                                     icon: 'https://cdn-icons-png.flaticon.com/512/1213/1213795.png',
@@ -141,7 +180,6 @@ const MarketList: React.FC = () => {
                                 });
                             }
 
-                            // Update visual state for a moment
                             setActiveAlerts(prev => ({ ...prev, [rawSymbol]: true }));
                             setTimeout(() => {
                                 setActiveAlerts(prev => {
@@ -168,7 +206,6 @@ const MarketList: React.FC = () => {
       ws.onclose = () => {
         if (ws) {
             setStatus('connecting');
-            // Simple reconnect logic
             reconnectTimeout = setTimeout(connect, 3000);
         }
       };
@@ -178,20 +215,16 @@ const MarketList: React.FC = () => {
 
     return () => {
       const socket = ws;
-      ws = null; // Prevent reconnect loop
+      ws = null; 
       clearTimeout(reconnectTimeout);
       if (socket) socket.close();
     };
-  }, []); // Empty dependency array ensures connection only happens once on mount
+  }, [wsCoinsString]); // Only reconnect if the SET of coins changes, not the order.
 
   const formatPrice = (priceStr: string, isStable: boolean) => {
     const price = parseFloat(priceStr);
     if (isNaN(price)) return '---';
-    
-    // Stablecoins need 4 decimals to see de-pegging details (e.g. 0.9998)
     if (isStable) return price.toFixed(4);
-
-    // Dynamic precision for others
     if (price < 1) return price.toFixed(6);
     if (price < 10) return price.toFixed(4);
     if (price < 1000) return price.toFixed(2);
@@ -205,28 +238,95 @@ const MarketList: React.FC = () => {
     return ((c - o) / o) * 100;
   };
 
+  // Editing Functions
+  const moveCoin = (index: number, direction: 'up' | 'down') => {
+    if (direction === 'up' && index === 0) return;
+    if (direction === 'down' && index === coins.length - 1) return;
+    
+    const newCoins = [...coins];
+    const targetIndex = direction === 'up' ? index - 1 : index + 1;
+    [newCoins[index], newCoins[targetIndex]] = [newCoins[targetIndex], newCoins[index]];
+    setCoins(newCoins);
+  };
+
+  const removeCoin = (coinToRemove: string) => {
+    setCoins(coins.filter(c => c !== coinToRemove));
+  };
+
+  const addCoin = () => {
+    const formatted = newCoinInput.trim().toUpperCase();
+    if (!formatted) return;
+    if (coins.includes(formatted)) {
+      alert('Coin already in list');
+      return;
+    }
+    setCoins([formatted, ...coins]); // Add to top
+    setNewCoinInput('');
+  };
+
   const filteredCoins = useMemo(() => {
-    return ALL_COINS.filter(coin => 
+    // In edit mode, show all so user can reorder them
+    if (isEditing) return coins;
+    // In view mode, filter by search
+    return coins.filter(coin => 
       coin.toLowerCase().includes(searchTerm.toLowerCase())
     );
-  }, [searchTerm]);
+  }, [coins, searchTerm, isEditing]);
 
   return (
     <div className="pb-24">
-      {/* Search Bar */}
-      <div className="sticky top-14 md:top-16 z-30 bg-[#0f172a]/95 backdrop-blur py-3 px-4 border-b border-slate-800">
-        <div className="relative">
-            <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                <MagnifyingGlassIcon className="h-4 w-4 text-slate-500" />
-            </div>
-            <input
-                type="text"
-                className="block w-full pl-10 pr-3 py-2 border border-slate-700 rounded-xl leading-5 bg-slate-800 text-slate-300 placeholder-slate-500 focus:outline-none focus:bg-slate-900 focus:border-indigo-500 transition-colors sm:text-sm"
-                placeholder={t.searchPlaceholder}
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-            />
+      {/* Header / Controls */}
+      <div className="sticky top-14 md:top-16 z-30 bg-[#0f172a]/95 backdrop-blur py-3 px-4 border-b border-slate-800 flex flex-col gap-3">
+        <div className="flex items-center gap-2">
+            {!isEditing ? (
+                <div className="relative flex-1">
+                    <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                        <MagnifyingGlassIcon className="h-4 w-4 text-slate-500" />
+                    </div>
+                    <input
+                        type="text"
+                        className="block w-full pl-10 pr-3 py-2 border border-slate-700 rounded-xl leading-5 bg-slate-800 text-slate-300 placeholder-slate-500 focus:outline-none focus:bg-slate-900 focus:border-indigo-500 transition-colors sm:text-sm"
+                        placeholder={t.searchPlaceholder}
+                        value={searchTerm}
+                        onChange={(e) => setSearchTerm(e.target.value)}
+                    />
+                </div>
+            ) : (
+                <div className="flex-1 flex gap-2">
+                    <input
+                        type="text"
+                        className="block w-full px-3 py-2 border border-slate-700 rounded-xl leading-5 bg-slate-800 text-slate-300 placeholder-slate-500 focus:outline-none focus:bg-slate-900 focus:border-emerald-500 transition-colors sm:text-sm"
+                        placeholder="Add Coin (e.g. PEOPLE)"
+                        value={newCoinInput}
+                        onChange={(e) => setNewCoinInput(e.target.value)}
+                        onKeyDown={(e) => e.key === 'Enter' && addCoin()}
+                    />
+                    <button 
+                        onClick={addCoin}
+                        className="p-2 bg-emerald-600/20 text-emerald-400 border border-emerald-600/30 rounded-xl hover:bg-emerald-600/30"
+                    >
+                        <PlusIcon className="w-5 h-5" />
+                    </button>
+                </div>
+            )}
+            
+            <button
+                onClick={() => setIsEditing(!isEditing)}
+                className={`p-2 rounded-xl border transition-colors ${
+                    isEditing 
+                    ? 'bg-indigo-600 text-white border-indigo-500' 
+                    : 'bg-slate-800 text-slate-400 border-slate-700 hover:text-white'
+                }`}
+            >
+                {isEditing ? <CheckIcon className="w-5 h-5" /> : <PencilSquareIcon className="w-5 h-5" />}
+            </button>
         </div>
+        
+        {isEditing && (
+            <div className="text-[10px] text-slate-500 px-1 text-center">
+                Use arrows to reorder. Changes saved automatically.
+            </div>
+        )}
       </div>
 
       {/* Connection Status (if not connected) */}
@@ -241,14 +341,16 @@ const MarketList: React.FC = () => {
       {/* Coin List */}
       <div className="px-3 sm:px-6 lg:px-8 py-2">
         <div className="bg-slate-800/50 rounded-2xl border border-slate-700/50 overflow-hidden">
-            <div className="grid grid-cols-12 gap-2 px-4 py-3 bg-slate-800/80 border-b border-slate-700 text-xs font-semibold text-slate-500 uppercase tracking-wider">
-                <div className="col-span-4">{t.colCoin}</div>
-                <div className="col-span-4 text-right">{t.colPrice}</div>
-                <div className="col-span-4 text-right">{t.colChange}</div>
-            </div>
+            {!isEditing && (
+                <div className="grid grid-cols-12 gap-2 px-4 py-3 bg-slate-800/80 border-b border-slate-700 text-xs font-semibold text-slate-500 uppercase tracking-wider">
+                    <div className="col-span-4">{t.colCoin}</div>
+                    <div className="col-span-4 text-right">{t.colPrice}</div>
+                    <div className="col-span-4 text-right">{t.colChange}</div>
+                </div>
+            )}
             
             <div className="divide-y divide-slate-700/50">
-                {filteredCoins.map(coin => {
+                {filteredCoins.map((coin, index) => {
                     const symbol = `${coin}USDT`;
                     const data = tickers[symbol];
                     const price = data ? data.c : undefined;
@@ -256,6 +358,40 @@ const MarketList: React.FC = () => {
                     const isPositive = change >= 0;
                     const isStable = STABLE_COINS.includes(coin);
                     const isAlerting = activeAlerts[coin];
+
+                    if (isEditing) {
+                        return (
+                            <div key={coin} className="flex items-center justify-between px-4 py-3 bg-slate-800/30">
+                                <div className="flex items-center gap-3">
+                                    <span className="font-mono text-sm text-slate-400 w-6 text-center">{index + 1}</span>
+                                    <span className="font-bold text-slate-200">{coin}</span>
+                                </div>
+                                <div className="flex items-center gap-1">
+                                    <button 
+                                        onClick={() => moveCoin(index, 'up')}
+                                        disabled={index === 0}
+                                        className="p-1.5 rounded-lg bg-slate-700 text-slate-400 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed"
+                                    >
+                                        <ChevronUpIcon className="w-4 h-4" />
+                                    </button>
+                                    <button 
+                                        onClick={() => moveCoin(index, 'down')}
+                                        disabled={index === coins.length - 1}
+                                        className="p-1.5 rounded-lg bg-slate-700 text-slate-400 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed"
+                                    >
+                                        <ChevronDownIcon className="w-4 h-4" />
+                                    </button>
+                                    <div className="w-2"></div>
+                                    <button 
+                                        onClick={() => removeCoin(coin)}
+                                        className="p-1.5 rounded-lg bg-rose-500/10 text-rose-400 border border-rose-500/20 hover:bg-rose-500/20"
+                                    >
+                                        <TrashIcon className="w-4 h-4" />
+                                    </button>
+                                </div>
+                            </div>
+                        );
+                    }
 
                     return (
                         <div key={coin} className={`grid grid-cols-12 gap-2 px-4 py-4 items-center transition-colors ${
@@ -300,7 +436,7 @@ const MarketList: React.FC = () => {
             </div>
         </div>
         
-        {filteredCoins.length === 0 && (
+        {!isEditing && filteredCoins.length === 0 && (
             <div className="text-center py-12 text-slate-500">
                 No coins found matching "{searchTerm}"
             </div>

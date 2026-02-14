@@ -5,6 +5,8 @@ import { analyzeArbitrage } from '../services/geminiService';
 import { useLanguage } from '../contexts/LanguageContext';
 import { useSettings } from '../contexts/SettingsContext';
 import { ArrowPathIcon, SparklesIcon, SignalIcon, ExclamationTriangleIcon, BanknotesIcon, BellAlertIcon } from '@heroicons/react/24/solid';
+import { Capacitor } from '@capacitor/core';
+import { LocalNotifications } from '@capacitor/local-notifications';
 
 interface ArbCardProps {
   symbol: string;
@@ -129,14 +131,26 @@ const ArbCard: React.FC<ArbCardProps> = ({ symbol }) => {
                 .replace('{symbol}', symbol)
                 .replace('{spread}', maxCurrentSpread.toFixed(2));
 
-            // Browser Notification
-            if (document.visibilityState === 'hidden' || true) {
-                 new Notification(`${t.appTitle}: ${symbol} Alert`, {
-                     body: message,
-                     icon: 'https://cdn-icons-png.flaticon.com/512/1213/1213795.png',
-                     tag: `arb-alert-${symbol}` // replace existing notification for same symbol
-                 });
-            }
+            const sendAlert = async () => {
+                if (Capacitor.isNativePlatform()) {
+                    await LocalNotifications.schedule({
+                        notifications: [{
+                            title: `${t.appTitle}: ${symbol} Alert`,
+                            body: message,
+                            id: Math.floor(Math.random() * 1000000),
+                            schedule: { at: new Date(Date.now() + 100) },
+                            smallIcon: 'res://drawable/ic_stat_name', // optional if setup
+                        }]
+                    });
+                } else if (document.visibilityState === 'hidden' || true) {
+                    new Notification(`${t.appTitle}: ${symbol} Alert`, {
+                        body: message,
+                        icon: 'https://cdn-icons-png.flaticon.com/512/1213/1213795.png',
+                        tag: `arb-alert-${symbol}`
+                    });
+                }
+            };
+            sendAlert();
         }
     }
   }, [uSpread, coinSpread, alertThreshold, notificationsEnabled, symbol, t]);
