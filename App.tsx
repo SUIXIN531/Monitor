@@ -9,10 +9,10 @@ import { StatusBar, Style } from '@capacitor/status-bar';
 import { App as CapApp } from '@capacitor/app';
 
 const SettingsModal: React.FC<{ isOpen: boolean; onClose: () => void }> = ({ isOpen, onClose }) => {
-  const { t } = useLanguage();
+  const { t, language } = useLanguage();
   const { 
     alertThreshold, setAlertThreshold, 
-    notificationsEnabled, requestNotificationPermission,
+    notificationsEnabled, notificationPermissionDenied, requestNotificationPermission,
     volatilityThreshold, setVolatilityThreshold,
     volatilityWindow, setVolatilityWindow
   } = useSettings();
@@ -20,6 +20,30 @@ const SettingsModal: React.FC<{ isOpen: boolean; onClose: () => void }> = ({ isO
   if (!isOpen) return null;
 
   const timeOptions = [1, 5, 15, 60];
+
+  const getNotifButtonContent = () => {
+    if (notificationsEnabled) {
+      return {
+        icon: <BellAlertIcon className="w-5 h-5" />,
+        label: t.notificationsEnabled,
+        className: 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 cursor-default',
+      };
+    }
+    if (notificationPermissionDenied) {
+      return {
+        icon: <BellSlashIcon className="w-5 h-5" />,
+        label: language === 'zh' ? '通知已被拒绝，点击前往设置开启' : 'Permission denied — tap to open Settings',
+        className: 'bg-red-500/20 text-red-400 border border-red-500/30 hover:bg-red-500/30',
+      };
+    }
+    return {
+      icon: <BellSlashIcon className="w-5 h-5" />,
+      label: t.notificationsDisabled,
+      className: 'bg-indigo-600 text-white hover:bg-indigo-500 shadow-lg shadow-indigo-500/20',
+    };
+  };
+
+  const notifBtn = getNotifButtonContent();
 
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">
@@ -41,24 +65,19 @@ const SettingsModal: React.FC<{ isOpen: boolean; onClose: () => void }> = ({ isO
           <div className="bg-slate-900/50 p-4 rounded-xl border border-slate-700/50">
             <button
               onClick={requestNotificationPermission}
-              className={`w-full py-2.5 px-4 rounded-lg flex items-center justify-center gap-2 font-medium transition-all ${
-                notificationsEnabled 
-                  ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 cursor-default'
-                  : 'bg-indigo-600 text-white hover:bg-indigo-500 shadow-lg shadow-indigo-500/20'
-              }`}
+              disabled={notificationsEnabled}
+              className={`w-full py-2.5 px-4 rounded-lg flex items-center justify-center gap-2 font-medium transition-all ${notifBtn.className}`}
             >
-              {notificationsEnabled ? (
-                <>
-                  <BellAlertIcon className="w-5 h-5" />
-                  {t.notificationsEnabled}
-                </>
-              ) : (
-                <>
-                  <BellSlashIcon className="w-5 h-5" />
-                  {t.notificationsDisabled}
-                </>
-              )}
+              {notifBtn.icon}
+              <span className="text-sm text-center leading-tight">{notifBtn.label}</span>
             </button>
+            {notificationPermissionDenied && !notificationsEnabled && (
+              <p className="text-xs text-slate-500 mt-2 text-center">
+                {language === 'zh'
+                  ? '请在手机「设置 → 应用 → 监控器 → 通知」中手动开启'
+                  : 'Go to phone Settings → Apps → Monitor → Notifications to enable'}
+              </p>
+            )}
           </div>
 
           {/* Arbitrage Alert */}
